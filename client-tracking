@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Client Tracking - Crave Optimal Health</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23EF4444'><path d='M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z'/></svg>">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // ============================================================
+        // SUPABASE HELPER (REST API without SDK)
+        // ============================================================
+        const SUPABASE_URL = "https://mubstmorxyrykpytvgdx.supabase.co";
+        const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11YnN0bW9yeHlyeWtweXR2Z2R4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5MDY2OTIsImV4cCI6MjA4NzQ4MjY5Mn0.h21FOa3sF22e_unWyhJe620c1gsc5JXWMaNkI_Z8FWc";
+
+        let sessionState = { user: null, session: null };
+
+        const sb = {
+          getSession: () => sessionState.session,
+          getUser: () => sessionState.user,
+          setSession: (session, user) => {
+            sessionState.session = session;
+            sessionState.user = user;
+          },
+          clearSession: () => {
+            sessionState.session = null;
+            sessionState.user = null;
+          },
+
+          signUp: async (email, password, fullName) => {
+            const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY },
+              body: JSON.stringify({ email, password, data: { full_name: fullName } })
+            });
+            const data = await res.json();
+            if (data.error) throw new Error(data.error.message || data.error);
+            if (!res.ok) throw new Error(data.msg || data.message || "Sign up failed");
+            const session = data.access_token ? data : data.session;
+            const user = data.user || session?.user;
+            if (session?.access_token) sb.setSession(session, user);
+            return { session, user, needsConfirmation: !session?.access_token };
+          },
+
+          signIn: async (email, password) => {
+            const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY },
+              body: JSON.stringify({ email, password })
+            });
+            const data = await res.json();
+            if (data.error) throw new Error(data.error_description || data.error.message || data.error);
+            if (!res.ok) throw new Error(data.msg || "Sign in failed");
+            sb.setSession(data, data.user);
+            return data;
+          },
+
+          signOut: () => {
+            sb.clearSession();
+          },
+
+          from: (table) => ({
+            select: (columns = "*") => ({
+              execute: async () => {
+                const session = sb.getSession();
+                const headers = {
+                  "apikey": SUPABASE_ANON_KEY,
+                  "Content-Type": "application/json"
+                };
+                if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+
+                const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=${columns}`, { headers });
+                const data = await res.json();
+                if (data.error) throw new Error(data.error.message);
+                return data;
+              }
+            }),
+            insert: (data) => ({
+              execute: async () => {
+                const session = sb.getSession();
+                const headers = {
+                  "apikey": SUPABASE_ANON_KEY,
+                  "Content-Type": "application/json",
+                  "Prefer": "return=representation"
+                };
+                if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+
+                const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+                  method: "POST",
+                  headers,
+                  body: JSON.stringify(Array.isArray(data) ? data : [data])
+                });
+                const respData = await res.json();
+                if (res.status >= 400) throw new Error(respData.message || "Insert failed");
+                return respData;
+              }
+            }),
+            update: (data) => ({
+              eq: (col, val) => ({
+                execute: async () => {
+                  const session = sb.getSession();
+                  const headers = {
+                    "apikey": SUPABASE_ANON_KEY,
+                    "Content-Type": "application/json",
+                    "Prefer": "return=representation"
+                  };
+                  if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+
+                  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${col}=eq.${val}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify(data)
+                  });
+                  const respData = await res.json();
+                  if (res.status >= 400) throw new Error(respData.message || "Update failed");
+                  return respData;
+                }
+              })
+            }),
+            delete: () => ({
+              eq: (col, val) => ({
+                execute: async () => {
+                  const session = sb.getSession();
+                  const headers = {
+                    "apikey": SUPABASE_ANON_KEY,
+                    "Content-Type": "application/json"
+                  };
+                  if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+
+                  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${col}=eq.${val}`, {
+                    method: "DELETE",
+                    headers
+                  });
+                  if (res.status >= 400) throw new Error("Delete failed");
+                }
+              })
+            })
+          })
+        };
+
+        // ============================================================
+        // CONSTANTS
+        // ============================================================
+        const ELEMENTS = [
+          "Introduction: Your LifeBook", "Your Current Story", "Element 01: Being clear why you're here",
+          "Element 02: Knowing what you want", "Element 03: Creating what you want",
+          "Element 04: Building a healthy mindset", "Element 05: Optimizing surroundings",
+          "Element 06: Path to a healthy weight", "Element 07: Creating a new leptogenic world",
+          "Element 08: Eating every three hours", "Element 09: Using fuelings",
+          "Element 10: The role of hydration", "Element 11: Eating healthy beyond fuelings",
+          "Element 12: Optimizing your success", "Element 13: Track your journey",
+          "Element 14: Transitioning to eating healthy", "Element 15: Eating healthy for life",
+          "Element 16: Dealing with addictive food", "Element 17: Perpetual motion machine",
+          "Element 18: Exercise is your gift", "Element 19: Healthy sleep & energy",
+          "Element 20: Anti-inflammation protection", "Element 21: Supplementation",
+          "Element 22: Creating optimal wellbeing", "Element 23: Thoughts and emotions",
+          "Element 24: Higher consciousness", "Element 25: Habits of longevity",
+          "Element 26: Ultrahealth", "Epilogue: Your new story"
+        ];
+
+        const MACROS = ["Water Intake", "Healthy Breakfast", "Meal Planning", "Mindful Eating", "Portion Control", "Exercise", "Sleep Routine", "Healthy Snacking"];
+        const CONTACTS = ["Call", "Text", "Video", "Email", "No Contact"];
+
+        // ============================================================
+        // UTILITIES
+        // ============================================================
+        const calcBMI = (w, h) => ((w / (h * h)) * 703).toFixed(1);
+        const getLatest = (weeks) => weeks[weeks.length - 1];
+        const getChange = (weeks) => weeks.length < 2 ? 0 : +(weeks[weeks.length - 2].weight - weeks[weeks.length - 1].weight).toFixed(1);
+
+        // ============================================================
+        // REUSABLE COMPONENTS
+        // ============================================================
+        const StatusBadge = ({ change }) => {
+          const c = parseFloat(change);
+          if (c > 0) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">▼ {change} lbs</span>;
+          if (c < 0) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">▲ {Math.abs(c)} lbs</span>;
+          return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">— maintained</span>;
+        };
+
+        const LevelDots = ({ value, type = "energy" }) => {
+          const colors = type === "energy"
+            ? ["#EF4444", "#F97316", "#EAB308", "#84CC16", "#22C55E"]
+            : ["#22C55E", "#84CC16", "#EAB308", "#F97316", "#EF4444"];
+          return (
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map(i => (
+                <div key={i} className="w-2.5 h-2.5 rounded-full transition-all" style={{ backgroundColor: i <= value ? colors[i - 1] : "#E5E7EB" }} />
+              ))}
+            </div>
+          );
+        };
+
+        const LevelSelector = ({ value, onChange, type = "energy", label }) => {
+          const colors = type === "energy"
+            ? ["#EF4444", "#F97316", "#EAB308", "#84CC16", "#22C55E"]
+            : ["#22C55E", "#84CC16", "#EAB308", "#F97316", "#EF4444"];
+          const labels = type === "energy" ? ["Very Low", "Low", "OK", "Good", "Great"] : ["None", "Low", "Moderate", "High", "Very High"];
+          return (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <button key={i} type="button" onClick={() => onChange(i)}
+                    className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 border-2 transition-all ${value === i ? 'shadow-md scale-105' : 'border-gray-200 opacity-60 hover:opacity-100'}`}
+                    style={{ borderColor: value === i ? colors[i - 1] : undefined, backgroundColor: value === i ? colors[i - 1] + '20' : undefined }}>
+                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: colors[i - 1] }} />
+                    <span className="text-xs text-gray-500">{i}</span>
+                  </button>
+                ))}
+              </div>
+              {value > 0 && <p className="text-xs text-gray-400 mt-1">{labels[value - 1]}</p>}
+            </div>
+          );
+        };
+
+        const Sparkline = ({ data, width = 120, height = 32, color = "#4F46E5" }) => {
+          if (!data || data.length < 2) return null;
+          const min = Math.min(...data) - 1;
+          const max = Math.max(...data) + 1;
+          const range = max - min || 1;
+          const points = data.map((v, i) => `${(i / (data.length - 1)) * width},${height - ((v - min) / range) * height}`).join(" ");
+          return (
+            <svg width={width} height={height} className="inline-block">
+              <polyline fill="none" stroke={color} strokeWidth="2" points={points} />
+              <circle cx={width} cy={height - ((data[data.length - 1] - min) / range) * height} r="3" fill={color} />
+            </svg>
+          );
+        };
+
+        const ProgressRing = ({ percent, size = 48, stroke = 4, color = "#4F46E5" }) => {
+          const r = (size - stroke) / 2;
+          const circ = r * 2 * Math.PI;
+          return (
+            <svg width={size} height={size} className="transform -rotate-90">
+              <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#E5E7EB" strokeWidth={stroke} />
+              <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke}
+                strokeDasharray={circ} strokeDashoffset={circ - (percent / 100) * circ} strokeLinecap="round" style={{ transition: "stroke-dashoffset 0.5s ease" }} />
+            </svg>
+          );
+        };
+
+        const WeightChart = ({ weeks, goalWeight, startWeight }) => {
+          if (!weeks.length) return null;
+          const weights = weeks.map(w => w.weight);
+          const allVals = [...weights, goalWeight];
+          const min = Math.min(...allVals) - 3, max = Math.max(...allVals) + 3, range = max - min;
+          const W = 600, H = 200, P = 40;
+          const toX = i => P + (i / Math.max(weeks.length - 1, 1)) * (W - P * 2);
+          const toY = v => P + ((max - v) / range) * (H - P * 2);
+          const line = weights.map((w, i) => `${i === 0 ? 'M' : 'L'}${toX(i)},${toY(w)}`).join(' ');
+          const yLabels = [];
+          const step = Math.ceil(range / 5);
+          for (let v = Math.floor(min); v <= Math.ceil(max); v += step) yLabels.push(v);
+          return (
+            <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 220 }}>
+              {yLabels.map(v => (<g key={v}><line x1={P} y1={toY(v)} x2={W - P} y2={toY(v)} stroke="#F3F4F6" /><text x={P - 5} y={toY(v) + 4} textAnchor="end" fontSize="10" fill="#9CA3AF">{v}</text></g>))}
+              <line x1={P} y1={toY(goalWeight)} x2={W - P} y2={toY(goalWeight)} stroke="#EF4444" strokeWidth="1.5" strokeDasharray="6,4" />
+              <text x={W - P + 5} y={toY(goalWeight) + 4} fontSize="10" fill="#EF4444">Goal: {goalWeight}</text>
+              <line x1={P} y1={toY(startWeight)} x2={W - P} y2={toY(startWeight)} stroke="#9CA3AF" strokeWidth="1" strokeDasharray="4,4" />
+              <path d={line} fill="none" stroke="#4F46E5" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              {weights.map((w, i) => (<g key={i}><circle cx={toX(i)} cy={toY(w)} r="4" fill="#4F46E5" /><text x={toX(i)} y={toY(w) - 8} textAnchor="middle" fontSize="9" fill="#4F46E5" fontWeight="600">{w}</text></g>))}
+              {weeks.map((w, i) => <text key={i} x={toX(i)} y={H - 5} textAnchor="middle" fontSize="9" fill="#9CA3AF">{w.week.replace("Week ", "W")}</text>)}
+            </svg>
+          );
+        };
+
+        // ============================================================
+        // WEEKLY CHECK-IN FORM (Coach enters during session)
+        // ============================================================
+        const WeeklyCheckInForm = ({ client, onSave, onCancel }) => {
+          const { useState } = React;
+          const nextWeek = client.weeks.length === 0 ? "1st Day" : `Week ${client.weeks.length}`;
+          const today = new Date().toISOString().split('T')[0];
+          const [form, setForm] = useState({
+            weight: "", contact: "Call", energy: 0, stress: 0, sick: false,
+            goodNews: "", challenges: "", macro: "", action: "", notes: ""
+          });
+          const [saving, setSaving] = useState(false);
+
+          const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
+
+          const handleSave = () => {
+            if (!form.weight || form.energy === 0 || form.stress === 0) return;
+            setSaving(true);
+            setTimeout(() => {
+              onSave({ ...form, weight: parseFloat(form.weight), week: nextWeek, date: today });
+              setSaving(false);
+            }, 600);
+          };
+
+          const prevWeight = client.weeks.length > 0 ? getLatest(client.weeks).weight : client.startWeight;
+          const weightDiff = form.weight ? (prevWeight - parseFloat(form.weight)).toFixed(1) : null;
+
+          return (
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+              <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-5 text-white">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold">Weekly Check-In</h2>
+                    <p className="text-indigo-200 text-sm">{client.name} · {nextWeek}</p>
+                  </div>
+                  <button onClick={onCancel} className="text-white/70 hover:text-white p-2 rounded-lg hover:bg-white/10 transition-colors">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-6">
+                <div className="text-center pb-4 border-b border-gray-100">
+                  <label className="block text-sm font-medium text-gray-500 mb-2">Today's Weight</label>
+                  <div className="flex items-center justify-center gap-3">
+                    <input type="number" step="0.1" value={form.weight} onChange={e => update("weight", e.target.value)}
+                      className="text-4xl font-bold text-center w-40 border-0 border-b-2 border-gray-200 focus:border-indigo-500 focus:ring-0 text-gray-900 py-2"
+                      placeholder="0.0" />
+                    <span className="text-lg text-gray-400">lbs</span>
+                  </div>
+                  {weightDiff && (
+                    <div className="mt-2">
+                      {parseFloat(weightDiff) > 0
+                        ? <span className="text-green-600 font-medium">▼ {weightDiff} lbs from last week</span>
+                        : parseFloat(weightDiff) < 0
+                          ? <span className="text-red-500 font-medium">▲ {Math.abs(parseFloat(weightDiff))} lbs from last week</span>
+                          : <span className="text-yellow-600 font-medium">— Same as last week</span>}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-400 mt-1">Last weigh-in: {prevWeight} lbs</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <LevelSelector value={form.energy} onChange={v => update("energy", v)} type="energy" label="Energy Level" />
+                  <LevelSelector value={form.stress} onChange={v => update("stress", v)} type="stress" label="Stress Level" />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Contact Type</label>
+                    <div className="flex flex-wrap gap-2">
+                      {CONTACTS.map(c => (
+                        <button key={c} type="button" onClick={() => update("contact", c)}
+                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-all border ${form.contact === c ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Sick / Medical Concern?</label>
+                    <div className="flex gap-2">
+                      {[false, true].map(v => (
+                        <button key={String(v)} type="button" onClick={() => update("sick", v)}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${form.sick === v ? (v ? 'bg-red-50 border-red-300 text-red-700' : 'bg-green-50 border-green-300 text-green-700') : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                          {v ? "Yes" : "No"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4 pt-2 border-t border-gray-100">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Coaching Conversation</h3>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <span className="text-green-600 mr-1">●</span> Good News / Wins
+                    </label>
+                    <textarea rows={2} value={form.goodNews} onChange={e => update("goodNews", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+                      placeholder="What went well this week? Celebrate the wins..." />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <span className="text-amber-500 mr-1">●</span> Upcoming Challenges
+                    </label>
+                    <textarea rows={2} value={form.challenges} onChange={e => update("challenges", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+                      placeholder="What obstacles are ahead? What might make this week hard?" />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <span className="text-indigo-500 mr-1">●</span> Macro Habit Focus
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {MACROS.map(m => (
+                        <button key={m} type="button" onClick={() => update("macro", m)}
+                          className={`px-3 py-1.5 rounded-lg text-sm transition-all border ${form.macro === m ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-medium' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <span className="text-purple-500 mr-1">●</span> 7-Day Action Plan
+                    </label>
+                    <textarea rows={2} value={form.action} onChange={e => update("action", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+                      placeholder="What's the one thing to focus on this week?" />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Coach Notes (private)</label>
+                    <textarea rows={2} value={form.notes} onChange={e => update("notes", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none bg-gray-50"
+                      placeholder="Internal notes — only you see these..." />
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button onClick={onCancel} className="flex-1 px-4 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
+                    Cancel
+                  </button>
+                  <button onClick={handleSave} disabled={!form.weight || form.energy === 0 || form.stress === 0 || saving}
+                    className="flex-1 px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl text-sm font-bold hover:from-indigo-700 hover:to-purple-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-indigo-200">
+                    {saving ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg>
+                        Saving...
+                      </span>
+                    ) : "Save Check-In"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // ============================================================
+        // CLIENT SELF-SERVICE CHECK-IN
+        // ============================================================
+        const ClientSelfCheckIn = ({ client, onSave, onBack }) => {
+          const { useState } = React;
+          const [form, setForm] = useState({ weight: "", energy: 0, stress: 0, sick: false, goodNews: "", challenges: "" });
+          const [submitted, setSubmitted] = useState(false);
+          const update = (f, v) => setForm(p => ({ ...p, [f]: v }));
+
+          if (submitted) {
+            return (
+              <div className="min-h-screen bg-gradient-to-b from-indigo-50 to-white flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl shadow-xl p-10 text-center max-w-md w-full">
+                  <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  </div>
+                  <h2 className="text-2xl font-bold text-gray-900 mb-2">Check-In Submitted!</h2>
+                  <p className="text-gray-500 mb-6">Great job staying on track. Your coach will review your check-in before your next session.</p>
+                  <button onClick={onBack} className="text-indigo-600 font-medium hover:underline">Back to Dashboard</button>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div className="min-h-screen bg-gradient-to-b from-indigo-50 to-white p-4">
+              <div className="max-w-lg mx-auto">
+                <button onClick={onBack} className="flex items-center gap-2 text-sm text-gray-500 hover:text-indigo-600 mb-4">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                  Back
+                </button>
+
+                <div className="bg-white rounded-3xl shadow-xl overflow-hidden">
+                  <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-8 text-white text-center">
+                    <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                      <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                      </svg>
+                    </div>
+                    <h2 className="text-2xl font-bold">Weekly Check-In</h2>
+                    <p className="text-indigo-200 mt-1">Hi {client.name.split(' ')[0]}! How was your week?</p>
+                  </div>
+
+                  <div className="p-6 space-y-6">
+                    <div className="text-center">
+                      <label className="block text-sm font-medium text-gray-500 mb-3">What's your weight today?</label>
+                      <div className="flex items-center justify-center gap-2">
+                        <input type="number" step="0.1" value={form.weight} onChange={e => update("weight", e.target.value)}
+                          className="text-5xl font-bold text-center w-44 border-0 border-b-2 border-gray-200 focus:border-indigo-500 focus:ring-0 text-gray-900 py-2"
+                          placeholder="0.0" />
+                        <span className="text-xl text-gray-400">lbs</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-3 text-center">How's your energy this week?</label>
+                      <div className="flex justify-center gap-3">
+                        {[1, 2, 3, 4, 5].map(i => (
+                          <button key={i} type="button" onClick={() => update("energy", i)}
+                            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center text-2xl transition-all ${form.energy === i ? 'scale-110 shadow-lg ring-2 ring-indigo-300' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                            {["😴", "😕", "😊", "💪", "🔥"][i - 1]}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex justify-between text-xs text-gray-400 mt-2 px-2">
+                        <span>Very Low</span><span>Great!</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-3 text-center">Stress level this week?</label>
+                      <div className="flex justify-center gap-3">
+                        {[1, 2, 3, 4, 5].map(i => (
+                          <button key={i} type="button" onClick={() => update("stress", i)}
+                            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center text-2xl transition-all ${form.stress === i ? 'scale-110 shadow-lg ring-2 ring-indigo-300' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                            {["😌", "🙂", "😐", "😰", "🤯"][i - 1]}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex justify-between text-xs text-gray-400 mt-2 px-2">
+                        <span>Calm</span><span>Very High</span>
+                      </div>
+                    </div>
+
+                    <div className="text-center">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Feeling sick or any medical concerns?</label>
+                      <div className="flex justify-center gap-3">
+                        <button type="button" onClick={() => update("sick", false)}
+                          className={`px-6 py-3 rounded-xl text-sm font-medium transition-all border ${!form.sick ? 'bg-green-50 border-green-300 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
+                          Feeling Good
+                        </button>
+                        <button type="button" onClick={() => update("sick", true)}
+                          className={`px-6 py-3 rounded-xl text-sm font-medium transition-all border ${form.sick ? 'bg-red-50 border-red-300 text-red-700' : 'bg-white border-gray-200 text-gray-600'}`}>
+                          Not Great
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Share a win from this week!</label>
+                      <textarea rows={2} value={form.goodNews} onChange={e => update("goodNews", e.target.value)}
+                        className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+                        placeholder="What went well? Any victories big or small?" />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Anything tough coming up?</label>
+                      <textarea rows={2} value={form.challenges} onChange={e => update("challenges", e.target.value)}
+                        className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+                        placeholder="Any events, concerns, or challenges ahead?" />
+                    </div>
+
+                    <button onClick={() => { onSave({ ...form, weight: parseFloat(form.weight) }); setSubmitted(true); }}
+                      disabled={!form.weight || form.energy === 0 || form.stress === 0}
+                      className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-2xl text-lg font-bold hover:from-indigo-700 hover:to-purple-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-indigo-200">
+                      Submit Check-In
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // ============================================================
+        // ADD NEW CLIENT FORM
+        // ============================================================
+        const NewClientForm = ({ onSave, onCancel, isSaving }) => {
+          const { useState } = React;
+          const [form, setForm] = useState({
+            name: "", email: "", phone: "", startDate: new Date().toISOString().split('T')[0],
+            height: "", startWeight: "", goalWeight: "", contactMethod: "Text"
+          });
+          const update = (f, v) => setForm(p => ({ ...p, [f]: v }));
+
+          return (
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+              <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-5 text-white">
+                <h2 className="text-xl font-bold">Add New Client</h2>
+                <p className="text-emerald-200 text-sm">Enter their information to get started</p>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
+                    <input type="text" value={form.name} onChange={e => update("name", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="Jane Smith" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input type="email" value={form.email} onChange={e => update("email", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="jane@email.com" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                    <input type="tel" value={form.phone} onChange={e => update("phone", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="(555) 123-4567" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                    <input type="date" value={form.startDate} onChange={e => update("startDate", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Height (inches) *</label>
+                    <input type="number" value={form.height} onChange={e => update("height", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="65" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Preferred Contact</label>
+                    <div className="flex gap-2">
+                      {["Text", "Call", "Video", "Email"].map(c => (
+                        <button key={c} type="button" onClick={() => update("contactMethod", c)}
+                          className={`px-3 py-2 rounded-lg text-sm font-medium border transition-all ${form.contactMethod === c ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'border-gray-200 text-gray-600'}`}>
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Starting Weight *</label>
+                    <input type="number" step="0.1" value={form.startWeight} onChange={e => update("startWeight", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="210" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Goal Weight *</label>
+                    <input type="number" step="0.1" value={form.goalWeight} onChange={e => update("goalWeight", e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="160" />
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-3">
+                  <button onClick={onCancel} disabled={isSaving} className="flex-1 px-4 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+                  <button onClick={() => {
+                    if (!form.name || !form.height || !form.startWeight || !form.goalWeight) return;
+                    onSave({ ...form, height: +form.height, startWeight: +form.startWeight, goalWeight: +form.goalWeight });
+                  }} disabled={!form.name || !form.height || !form.startWeight || !form.goalWeight || isSaving}
+                    className="flex-1 px-4 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl text-sm font-bold hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 shadow-lg shadow-emerald-200">
+                    {isSaving ? "Adding..." : "Add Client"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // ============================================================
+        // CLIENT DETAIL VIEW
+        // ============================================================
+        const ClientDetail = ({ client, onBack, onCheckin }) => {
+          const { useState } = React;
+          const [activeTab, setActiveTab] = useState("overview");
+          const latest = getLatest(client.weeks);
+          const latestWeight = latest?.weight || client.startWeight;
+          const totalLoss = (client.startWeight - latestWeight).toFixed(1);
+          const lbsToGo = (latestWeight - client.goalWeight).toFixed(1);
+          const bmi = calcBMI(latestWeight, client.height);
+          const weeklyChange = getChange(client.weeks);
+          const progressPct = Math.min(100, Math.round((parseFloat(totalLoss) / (client.startWeight - client.goalWeight)) * 100));
+          const elemPct = Math.round((client.currentElement / ELEMENTS.length) * 100);
+
+          return (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <button onClick={onBack} className="flex items-center gap-2 text-sm text-gray-500 hover:text-indigo-600 transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                  Back to Dashboard
+                </button>
+                <button onClick={onCheckin}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl text-sm font-bold hover:from-indigo-700 hover:to-purple-700 shadow-lg shadow-indigo-200 transition-all">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                  New Check-In
+                </button>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg">
+                      {client.name.split(' ').map(n => n[0]).join('')}
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-bold text-gray-900">{client.name}</h2>
+                      <p className="text-sm text-gray-500">Started {client.startDate} · Week {Math.max(0, client.weeks.length - 1)} · {client.contactMethod}</p>
+                      <p className="text-sm text-gray-400">{client.email} · {client.phone}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-5 flex-wrap">
+                    <div className="text-center">
+                      <div className="relative inline-flex items-center justify-center">
+                        <ProgressRing percent={progressPct} size={64} stroke={5} color="#4F46E5" />
+                        <span className="absolute text-sm font-bold text-indigo-600">{progressPct}%</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">Weight Goal</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="relative inline-flex items-center justify-center">
+                        <ProgressRing percent={elemPct} size={64} stroke={5} color="#10B981" />
+                        <span className="absolute text-sm font-bold text-emerald-600">{elemPct}%</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">Curriculum</p>
+                    </div>
+                    <div className="text-center px-4 py-2 bg-indigo-50 rounded-xl"><p className="text-2xl font-bold text-indigo-700">{totalLoss}</p><p className="text-xs text-indigo-500">lbs lost</p></div>
+                    <div className="text-center px-4 py-2 bg-orange-50 rounded-xl"><p className="text-2xl font-bold text-orange-600">{lbsToGo}</p><p className="text-xs text-orange-500">lbs to go</p></div>
+                    <div className="text-center px-4 py-2 bg-gray-50 rounded-xl"><p className="text-2xl font-bold text-gray-700">{bmi}</p><p className="text-xs text-gray-500">BMI</p></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-1 mb-6 bg-gray-100 rounded-xl p-1 w-fit">
+                {["overview", "weekly log", "curriculum"].map(tab => (
+                  <button key={tab} onClick={() => setActiveTab(tab)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === tab ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}>
+                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  </button>
+                ))}
+              </div>
+
+              {activeTab === "overview" && (
+                <div className="space-y-6">
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Weight Journey</h3>
+                    <WeightChart weeks={client.weeks} goalWeight={client.goalWeight} startWeight={client.startWeight} />
+                  </div>
+                  {latest && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-semibold text-gray-900">Latest: {latest.week}</h3>
+                        <StatusBadge change={weeklyChange} />
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="p-3 bg-gray-50 rounded-xl"><p className="text-xs text-gray-500 mb-1">Energy</p><LevelDots value={latest.energy} type="energy" /></div>
+                        <div className="p-3 bg-gray-50 rounded-xl"><p className="text-xs text-gray-500 mb-1">Stress</p><LevelDots value={latest.stress} type="stress" /></div>
+                        <div className="p-3 bg-gray-50 rounded-xl"><p className="text-xs text-gray-500 mb-1">Macro Habit</p><p className="text-sm font-medium text-gray-700">{latest.macro}</p></div>
+                        <div className="p-3 bg-gray-50 rounded-xl"><p className="text-xs text-gray-500 mb-1">Contact</p><p className="text-sm font-medium text-gray-700">{latest.contact}</p></div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                        <div className="p-3 bg-green-50 rounded-xl"><p className="text-xs text-green-600 font-medium mb-1">Good News</p><p className="text-sm text-gray-700">{latest.goodNews}</p></div>
+                        <div className="p-3 bg-amber-50 rounded-xl"><p className="text-xs text-amber-600 font-medium mb-1">Challenges</p><p className="text-sm text-gray-700">{latest.challenges}</p></div>
+                        <div className="p-3 bg-indigo-50 rounded-xl"><p className="text-xs text-indigo-600 font-medium mb-1">Action Plan</p><p className="text-sm text-gray-700">{latest.action}</p></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === "weekly log" && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead><tr className="bg-gray-50 border-b">
+                        {["Week", "Weight", "Change", "Total Loss", "BMI", "Contact", "Energy", "Stress", "Good News", "Action"].map(h => (
+                          <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {[...client.weeks].reverse().map((w, i) => {
+                          const idx = client.weeks.length - 1 - i;
+                          const ch = idx > 0 ? (client.weeks[idx - 1].weight - w.weight).toFixed(1) : (client.startWeight - w.weight).toFixed(1);
+                          return (
+                            <tr key={i} className="hover:bg-gray-50">
+                              <td className="px-3 py-3 font-medium text-gray-900">{w.week}</td>
+                              <td className="px-3 py-3">{w.weight}</td>
+                              <td className="px-3 py-3"><StatusBadge change={ch} /></td>
+                              <td className="px-3 py-3">{(client.startWeight - w.weight).toFixed(1)}</td>
+                              <td className="px-3 py-3">{calcBMI(w.weight, client.height)}</td>
+                              <td className="px-3 py-3"><span className={`px-2 py-0.5 rounded text-xs font-medium ${w.contact === 'Call' ? 'bg-blue-100 text-blue-700' : w.contact === 'Video' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'}`}>{w.contact}</span></td>
+                              <td className="px-3 py-3"><LevelDots value={w.energy} type="energy" /></td>
+                              <td className="px-3 py-3"><LevelDots value={w.stress} type="stress" /></td>
+                              <td className="px-3 py-3 text-gray-600 max-w-xs truncate">{w.goodNews}</td>
+                              <td className="px-3 py-3 text-gray-600 max-w-xs truncate">{w.action}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "curriculum" && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Habits of Health Progress</h3>
+                  <div className="space-y-1">
+                    {ELEMENTS.map((el, i) => (
+                      <div key={i} className={`flex items-center gap-3 py-2 px-3 rounded-lg ${i < client.currentElement ? 'bg-green-50' : i === client.currentElement ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold ${i < client.currentElement ? 'bg-green-500 text-white' : i === client.currentElement ? 'bg-indigo-500 text-white' : 'bg-gray-200 text-gray-400'}`}>
+                          {i < client.currentElement ? '✓' : i + 1}
+                        </div>
+                        <span className={`text-sm ${i < client.currentElement ? 'text-green-700' : i === client.currentElement ? 'text-indigo-700 font-medium' : 'text-gray-400'}`}>{el}</span>
+                        {i === client.currentElement && <span className="ml-auto text-xs font-medium text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">Current</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        // ============================================================
+        // AUTH SCREEN
+        // ============================================================
+        const AuthScreen = ({ onAuthSuccess }) => {
+          const { useState } = React;
+          const [mode, setMode] = useState("login");
+          const [form, setForm] = useState({ email: "", password: "", fullName: "" });
+          const [error, setError] = useState("");
+          const [successMsg, setSuccessMsg] = useState("");
+          const [loading, setLoading] = useState(false);
+
+          const update = (f, v) => setForm(p => ({ ...p, [f]: v }));
+
+          const handleSubmit = async (e) => {
+            e.preventDefault();
+            setError("");
+            setLoading(true);
+
+            try {
+              if (mode === "login") {
+                await sb.signIn(form.email, form.password);
+                onAuthSuccess();
+              } else {
+                const result = await sb.signUp(form.email, form.password, form.fullName);
+                if (result.needsConfirmation) {
+                  setError("");
+                  setSuccessMsg("Check your email for a confirmation link, then sign in.");
+                  setMode("login");
+                } else {
+                  onAuthSuccess();
+                }
+              }
+            } catch (err) {
+              setError(err.message || "Authentication failed");
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 flex items-center justify-center p-4">
+              <div className="w-full max-w-md">
+                <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
+                  <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-8 py-12 text-white text-center">
+                    <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                      </svg>
+                    </div>
+                    <h1 className="text-3xl font-bold mb-2">Client Tracking</h1>
+                    <p className="text-indigo-200">Crave Optimal Health</p>
+                  </div>
+
+                  <div className="p-8">
+                    <div className="flex gap-2 mb-8">
+                      {["login", "signup"].map(m => (
+                        <button key={m} onClick={() => { setMode(m); setError(""); }}
+                          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${mode === m ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                          {m === "login" ? "Sign In" : "Sign Up"}
+                        </button>
+                      ))}
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                      {mode === "signup" && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+                          <input type="text" value={form.fullName} onChange={e => update("fullName", e.target.value)} required
+                            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                            placeholder="Jane Smith" />
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                        <input type="email" value={form.email} onChange={e => update("email", e.target.value)} required
+                          className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                          placeholder="you@example.com" />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                        <input type="password" value={form.password} onChange={e => update("password", e.target.value)} required
+                          className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                          placeholder="••••••••" />
+                      </div>
+
+                      {successMsg && (
+                        <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                          {successMsg}
+                        </div>
+                      )}
+
+                      {error && (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                          {error}
+                        </div>
+                      )}
+
+                      <button type="submit" disabled={loading}
+                        className="w-full py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl text-sm font-bold hover:from-indigo-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-200">
+                        {loading ? (
+                          <span className="flex items-center justify-center gap-2">
+                            <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" /></svg>
+                            {mode === "login" ? "Signing in..." : "Creating account..."}
+                          </span>
+                        ) : mode === "login" ? "Sign In" : "Create Account"}
+                      </button>
+                    </form>
+
+                    <p className="text-center text-xs text-gray-500 mt-6">
+                      {mode === "login" ? "Don't have an account? " : "Already have an account? "}
+                      <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }}
+                        className="text-indigo-600 hover:underline font-medium">
+                        {mode === "login" ? "Sign up" : "Sign in"}
+                      </button>
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // ============================================================
+        // MAIN APP
+        // ============================================================
+        function App() {
+          const { useState, useEffect, useMemo } = React;
+          const [authUser, setAuthUser] = useState(sb.getUser());
+          const [clients, setClients] = useState([]);
+          const [loading, setLoading] = useState(true);
+          const [view, setView] = useState("dashboard");
+          const [selectedClient, setSelectedClient] = useState(null);
+          const [searchTerm, setSearchTerm] = useState("");
+          const [sortBy, setSortBy] = useState("name");
+          const [filterStatus, setFilterStatus] = useState("all");
+          const [toast, setToast] = useState(null);
+
+          const showToast = (msg, type = "success") => {
+            setToast({ msg, type });
+            setTimeout(() => setToast(null), 3000);
+          };
+
+          useEffect(() => {
+            if (!authUser) return;
+
+            const loadData = async () => {
+              try {
+                setLoading(true);
+                const [allClients, allCheckins] = await Promise.all([
+                  sb.from("clients").select("*").execute(),
+                  sb.from("weekly_checkins").select("*").execute()
+                ]);
+
+                const checkinsByClient = {};
+                (allCheckins || []).forEach(c => {
+                  if (!checkinsByClient[c.client_id]) checkinsByClient[c.client_id] = [];
+                  checkinsByClient[c.client_id].push({
+                    id: c.id,
+                    week: c.week_label,
+                    date: c.checkin_date,
+                    weight: +c.weight,
+                    contact: c.contact_type,
+                    energy: c.energy,
+                    stress: c.stress,
+                    sick: c.sick,
+                    goodNews: c.good_news,
+                    challenges: c.challenges,
+                    macro: c.macro_habit,
+                    action: c.action_plan,
+                    notes: c.coach_notes
+                  });
+                });
+
+                const enrichedClients = (allClients || []).map(client => ({
+                  id: client.id,
+                  name: client.name,
+                  startDate: client.start_date,
+                  height: +client.height_inches,
+                  startWeight: +client.start_weight,
+                  goalWeight: +client.goal_weight,
+                  phone: client.phone || "",
+                  email: client.email || "",
+                  contactMethod: client.contact_method || "Text",
+                  currentElement: client.current_element || 0,
+                  weeks: (checkinsByClient[client.id] || []).sort((a, b) => new Date(a.date) - new Date(b.date))
+                }));
+
+                setClients(enrichedClients);
+              } catch (err) {
+                showToast("Failed to load clients: " + err.message, "error");
+              } finally {
+                setLoading(false);
+              }
+            };
+
+            loadData();
+          }, [authUser]);
+
+          const enriched = useMemo(() => clients.map(c => {
+            const lw = getLatest(c.weeks)?.weight || c.startWeight;
+            const tl = +(c.startWeight - lw).toFixed(1);
+            const wc = +getChange(c.weeks);
+            const status = wc > 0 ? "losing" : wc < 0 ? "gained" : "maintained";
+            const pp = Math.min(100, Math.round((tl / (c.startWeight - c.goalWeight)) * 100));
+            return { ...c, latestWeight: lw, totalLoss: tl, weeklyChange: wc, status, progressPercent: pp, weekNum: Math.max(0, c.weeks.length - 1) };
+          }), [clients]);
+
+          const filtered = useMemo(() => {
+            let r = enriched;
+            if (searchTerm) r = r.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()));
+            if (filterStatus !== "all") r = r.filter(c => c.status === filterStatus);
+            r.sort((a, b) => sortBy === "name" ? a.name.localeCompare(b.name) : sortBy === "loss" ? b.totalLoss - a.totalLoss : sortBy === "week" ? b.weekNum - a.weekNum : b.progressPercent - a.progressPercent);
+            return r;
+          }, [enriched, searchTerm, sortBy, filterStatus]);
+
+          const handleSaveCheckin = async (data) => {
+            try {
+              const checkinData = {
+                client_id: selectedClient.id,
+                week_label: data.week,
+                checkin_date: data.date,
+                weight: data.weight,
+                contact_type: data.contact,
+                energy: data.energy,
+                stress: data.stress,
+                sick: data.sick,
+                good_news: data.goodNews,
+                challenges: data.challenges,
+                macro_habit: data.macro,
+                action_plan: data.action,
+                coach_notes: data.notes
+              };
+
+              await sb.from("weekly_checkins").insert(checkinData).execute();
+
+              setClients(prev => prev.map(c => c.id === selectedClient.id ? { ...c, weeks: [...c.weeks, { ...data, id: Date.now() }] } : c));
+              setSelectedClient(prev => ({ ...prev, weeks: [...prev.weeks, { ...data, id: Date.now() }] }));
+              setView("detail");
+              showToast(`Check-in saved for ${selectedClient.name}!`);
+            } catch (err) {
+              showToast("Failed to save check-in: " + err.message, "error");
+            }
+          };
+
+          const handleAddClient = async (newClient) => {
+            try {
+              const clientData = {
+                coach_id: authUser.id,
+                name: newClient.name,
+                email: newClient.email,
+                phone: newClient.phone,
+                start_date: newClient.startDate,
+                height_inches: newClient.height,
+                start_weight: newClient.startWeight,
+                goal_weight: newClient.goalWeight,
+                contact_method: newClient.contactMethod,
+                current_element: 0
+              };
+
+              const result = await sb.from("clients").insert(clientData).execute();
+              const addedClient = result[0];
+
+              const transformedClient = {
+                id: addedClient.id,
+                name: addedClient.name,
+                startDate: addedClient.start_date,
+                height: addedClient.height_inches,
+                startWeight: addedClient.start_weight,
+                goalWeight: addedClient.goal_weight,
+                phone: addedClient.phone || "",
+                email: addedClient.email || "",
+                contactMethod: addedClient.contact_method,
+                currentElement: 0,
+                weeks: []
+              };
+
+              setClients(prev => [...prev, transformedClient]);
+              setView("dashboard");
+              showToast(`${newClient.name} added!`);
+            } catch (err) {
+              showToast("Failed to add client: " + err.message, "error");
+            }
+          };
+
+          if (!authUser) {
+            return <AuthScreen onAuthSuccess={() => setAuthUser(sb.getUser())} />;
+          }
+
+          if (loading) {
+            return (
+              <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                <div className="text-center">
+                  <svg className="animate-spin w-12 h-12 text-indigo-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  <p className="text-gray-600">Loading your dashboard...</p>
+                </div>
+              </div>
+            );
+          }
+
+          const totalClients = enriched.length;
+          const avgLoss = totalClients > 0 ? (enriched.reduce((s, c) => s + c.totalLoss, 0) / totalClients).toFixed(1) : 0;
+          const losingCount = enriched.filter(c => c.status === "losing").length;
+          const needsAttention = enriched.filter(c => c.status === "gained").length;
+
+          return (
+            <div className="min-h-screen bg-gray-50">
+              {toast && (
+                <div className="fixed top-4 right-4 z-50 animate-in">
+                  <div className={`px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
+                    {toast.msg}
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
+                <div className="max-w-7xl mx-auto px-4 lg:px-8 py-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <button onClick={() => { setView("dashboard"); setSelectedClient(null); }} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 flex items-center justify-center">
+                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                        </svg>
+                      </div>
+                      <div><h1 className="text-xl font-bold text-gray-900">Client Tracking</h1><p className="text-xs text-gray-500">{authUser.email}</p></div>
+                    </button>
+                    <div className="flex items-center gap-3">
+                      {view === "dashboard" && (
+                        <>
+                          <div className="relative">
+                            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                            <input type="text" placeholder="Search clients..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                              className="pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full md:w-64" />
+                          </div>
+                          <button onClick={() => setView("newClient")}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl text-sm font-bold hover:from-emerald-700 hover:to-teal-700 shadow-lg shadow-emerald-200 transition-all whitespace-nowrap">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                            Add Client
+                          </button>
+                        </>
+                      )}
+                      <button onClick={() => { sb.signOut(); setAuthUser(null); setClients([]); }}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-red-50 text-red-600 rounded-xl text-sm font-medium hover:bg-red-100 transition-all border border-red-200">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                        Sign Out
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="max-w-7xl mx-auto px-4 lg:px-8 py-6">
+                {view === "newClient" && (
+                  <div className="max-w-2xl mx-auto">
+                    <button onClick={() => setView("dashboard")} className="flex items-center gap-2 text-sm text-gray-500 hover:text-indigo-600 mb-4">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>Back
+                    </button>
+                    <NewClientForm onSave={handleAddClient} onCancel={() => setView("dashboard")} isSaving={loading} />
+                  </div>
+                )}
+
+                {view === "checkin" && selectedClient && (
+                  <div className="max-w-2xl mx-auto">
+                    <WeeklyCheckInForm client={selectedClient} onSave={handleSaveCheckin} onCancel={() => setView("detail")} />
+                  </div>
+                )}
+
+                {view === "clientCheckin" && selectedClient && (
+                  <ClientSelfCheckIn client={selectedClient} onSave={(data) => {
+                    const fullData = { ...data, week: `Week ${selectedClient.weeks.length}`, date: new Date().toISOString().split('T')[0], contact: "Self", macro: "", action: "", notes: "" };
+                    handleSaveCheckin(fullData);
+                  }} onBack={() => { setView("dashboard"); setSelectedClient(null); }} />
+                )}
+
+                {view === "detail" && selectedClient && (
+                  <ClientDetail client={selectedClient} onBack={() => { setView("dashboard"); setSelectedClient(null); }}
+                    onCheckin={() => setView("checkin")} />
+                )}
+
+                {view === "dashboard" && (
+                  <>
+                    {clients.length === 0 ? (
+                      <div className="text-center py-16">
+                        <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <svg className="w-10 h-10 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m0 0h6M6 12h6m0 0H6" />
+                          </svg>
+                        </div>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">No clients yet</h2>
+                        <p className="text-gray-500 mb-6">Add your first client to get started tracking their progress.</p>
+                        <button onClick={() => setView("newClient")}
+                          className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl text-sm font-bold hover:from-emerald-700 hover:to-teal-700 shadow-lg shadow-emerald-200">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                          Add Your First Client
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                          {[
+                            { label: "Active Clients", value: totalClients, icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z", color: "indigo" },
+                            { label: "Avg Weight Loss", value: `${avgLoss} lbs`, icon: "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6", color: "green" },
+                            { label: "Losing This Week", value: `${losingCount}/${totalClients}`, icon: "M5 13l4 4L19 7", color: "emerald" },
+                            { label: "Need Attention", value: needsAttention, icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z", color: needsAttention > 0 ? "red" : "gray" },
+                          ].map(({ label, value, icon, color }) => (
+                            <div key={label} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+                              <div className="flex items-center gap-3">
+                                <div className={`w-10 h-10 rounded-xl bg-${color}-100 flex items-center justify-center`}>
+                                  <svg className={`w-5 h-5 text-${color}-600`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={icon} /></svg>
+                                </div>
+                                <div><p className="text-2xl font-bold text-gray-900">{value}</p><p className="text-xs text-gray-500">{label}</p></div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 mb-4">
+                          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+                            {[{ k: "all", l: "All" }, { k: "losing", l: "Losing" }, { k: "maintained", l: "Maintained" }, { k: "gained", l: "Gained" }].map(f => (
+                              <button key={f.k} onClick={() => setFilterStatus(f.k)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${filterStatus === f.k ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500'}`}>{f.l}</button>
+                            ))}
+                          </div>
+                          <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+                            className="text-xs text-gray-600 bg-white border border-gray-200 rounded-lg px-3 py-2">
+                            <option value="name">Sort: Name</option>
+                            <option value="loss">Sort: Most Lost</option>
+                            <option value="week">Sort: Longest Active</option>
+                            <option value="progress">Sort: Closest to Goal</option>
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                          {filtered.map(client => (
+                            <button key={client.id} onClick={() => { setSelectedClient(client); setView("detail"); }}
+                              className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 text-left hover:shadow-md hover:border-indigo-200 transition-all group">
+                              <div className="flex items-start justify-between mb-3">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold shadow">
+                                    {client.name.split(' ').map(n => n[0]).join('')}
+                                  </div>
+                                  <div>
+                                    <h3 className="font-semibold text-gray-900 group-hover:text-indigo-700 transition-colors">{client.name}</h3>
+                                    <p className="text-xs text-gray-400">Week {client.weekNum} · {client.contactMethod}</p>
+                                  </div>
+                                </div>
+                                <StatusBadge change={client.weeklyChange} />
+                              </div>
+                              <div className="flex items-center justify-between mb-3">
+                                <div><span className="text-2xl font-bold text-indigo-700">{client.totalLoss}</span><span className="text-sm text-gray-400 ml-1">lbs lost</span></div>
+                                <Sparkline data={client.weeks.map(w => w.weight)} color={client.status === "gained" ? "#EF4444" : "#4F46E5"} />
+                              </div>
+                              <div className="mb-3">
+                                <div className="flex justify-between text-xs text-gray-400 mb-1"><span>{client.latestWeight} lbs</span><span>Goal: {client.goalWeight}</span></div>
+                                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                  <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full" style={{ width: `${client.progressPercent}%` }} />
+                                </div>
+                                <p className="text-xs text-gray-400 mt-1">{client.progressPercent}% to goal</p>
+                              </div>
+                              <div className="flex items-center gap-4 text-xs text-gray-500">
+                                <div className="flex items-center gap-1"><span className="text-gray-400">Energy</span><LevelDots value={getLatest(client.weeks)?.energy || 0} type="energy" /></div>
+                                <div className="flex items-center gap-1"><span className="text-gray-400">Stress</span><LevelDots value={getLatest(client.weeks)?.stress || 0} type="stress" /></div>
+                                <span className="ml-auto text-gray-400">El. {client.currentElement}/{ELEMENTS.length}</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+    </script>
+</body>
+</html>
